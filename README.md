@@ -2,10 +2,11 @@
 My own Errata for Zilog eZ80F91 AcclaimPlus! ASSP current production silicon.
 
 According to Zilogs own Errata UP012703-1110, there are no more bugs in 
-chips with manufacturing datecode after 0929 (so since 2009!).
+chips with manufacturing datecode after 0929 (so since 2009!). IMHO, that's not the case.
+
 Unfortunately, i can't find a way to get in touch with them directly, nor
-did i ever got any answer to my inquiries through the contact form on the Zilog
-Homepage. So i'll try to describe my own findings here. If anyone else is struggeling
+did i ever got any response to my inquiries through the contact form on the Zilog
+web site. So i'll try to describe my own findings here. If anyone else is struggeling
 with mysterious behavior of that chip and can't find any explanation for it on the web,
 maybe, it is of help to someone out there. 
 
@@ -26,12 +27,12 @@ after it detects BUSACKn to be Low.
 The bus has pull-up resistors on all signals, to prevent them from floating.
 
 ## 1)  BUSREQn confuses the eZ80 while executing prefixed instructions:
-If the BUSREQn signals becomes low in the same cycle as an instruction
-with an ADL-Prefix is fetched from memory, the eZ80 will grant the bus by
+If the BUSREQn signals becomes low at the same time as an instruction
+with a memory mode prefix is fetched from memory, the eZ80 will grant the bus by
 bringing BUSACKn Low but will fetch the next instruction from the wrong address after
 it has bus ownership again. 
 Mainly, it seems like the wrong processor mode is used for the instruction fetch, depending on 
-the prefix used. 
+the prefix used, before. 
 
 Here is a Code snippet with a .SIL prefixed instruction while running in ADL mode:
 ```
@@ -41,7 +42,7 @@ F80F65  EB        EX   DE,HL           <- On this Address, bits[23:16] are 00 af
 F80F66  ED 33 03  LEA  IY,IY+%3
 F80F69  20 DE     JR   NZ,%F49
 ```
-If the BUSREQ signals hits exactly at the Instruction with .SIL Prefix, the first instruction
+If the BUSREQ signals hits exactly at the instruction with .SIL prefix, the first instruction
 after the eZ80 reclaiming the bus will be read with the upper byte of PC at 00.
 If running in Z80 Mode, then the same happens with .LIS/.LIL prefixes.
 With a Long prefix in Z80 Mode, the CPU will read the next Instrucion with the upper
@@ -108,10 +109,45 @@ I'd also suspect, that the two byte return address store would then have been a 
 in the third byte.  But that isn't the case, either.  Also, this happens only, if the NMI hits a prefixed instruction. Any other
 time, it reacts as expected.
 
-## 3) Conclusion:
-Yeah... all that prefix-things in eZ80 seem to be really messed up, if NMI or BUSREQ interruption happens while executing them.
-I did not test the normal maskable interrupt behavior with prefixed instructions, yet. Maybe that works, but i'd doubt. 
-Both points do really hurt with using the eZ80 in my application (at least!).\
-As the Zilog ZDS C Library makes heavy use of prefixed instructions for string handling and the like, i even can't use that with my project,
-while an NMI (as IRQ fallback) or BUSREQ/ACK cycle could possibly occour. 
-The whole concept of shared memory access between the eZ80 and the FPGA bus master in my project is wrecked by these two bugs. 
+## 4)  IRQ confuses the eZ80 while executing prefixed instructions: 
+While looking after some other strange effects with NMI, i wanted to have a look at IRQ, too. 
+Turns out: When running in Z80 mode and using prefixed instructions like in example #3, the outcome
+is exactly the same as in #3.  So, no... IRQ doesn't work in Z80 mode while using memory mode prefixes, either.
+
+## What _SEEMS_ to work as a workaround is the following: 
+When running in Z80 Mode and you need to use interrupts and prefixed instructions in your application at once (oh, behave!!)
+then try with mixed memory mode. 
+- Setup the 16 bit I Register to the beginning of the vector table.
+- point SPS to a valid stack location
+- point SPL to a valid !different! stack location
+- set the vector for the peripheral to the service routine
+  -> That service routine needs to be written in ADL Mode, obviously!! 
+- enable interrupts.
+- enjoy
+
+That way, no more strange prefix related issues occured for me.
+
+As my application needs Z80 Mode interrupt Handling, i came up with the following Service Routine: 
+```
+  .ORG 38h
+Z80MODE_IRQ_ROUTINE:
+  ... do things in Z80 Mode
+  ei
+  reti
+
+  .ORG xyz
+INTENTRY:       ; This is the address, i placed in the vector table. Routine starts in ADL Mode due to MIXED MODE
+  PUSH IX       ; Save IX to SPL
+  PUSH HL       ; Save HL to SPL
+  LD IX,0
+  ADD IX,SP     ; IX now Points to the bottom of SPL Stack
+  LD L, (IX+7)  ; Get the return Address from SPL into HL
+  LD H, (IX+8) 
+  PUSH.S HL     ; Push return Address to SPS (Z80 Mode Stack)
+  POP HL
+  POP IX        ; Restore IX,HL from SPL
+  INC SP
+  INC SP
+  INC SP        ; Get rid of the return Address on SPL including the memory mode bit
+  JP.SIS Z80MODE_IRQ_ROUTINE  ; Jump to Z80 Mode service routine using mode switching JP.
+```
