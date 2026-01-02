@@ -120,9 +120,10 @@ then try with mixed memory mode.
 - Setup the 16 bit I Register to the beginning of the vector table.
 - point SPS to a valid stack location
 - point SPL to a valid !different! stack location
+- Set the Mixed Mode Bit by using STMIX instruction
 - set the vector for the peripheral to the service routine
   -> That service routine needs to be written in ADL Mode, obviously!! 
-- enable interrupts.
+- enable interrupts
 - enjoy
 
 That way, no more strange prefix related issues occured for me.
