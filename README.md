@@ -138,17 +138,14 @@ Z80MODE_IRQ_ROUTINE:
 
   .ORG xyz
 INTENTRY:       ; This is the address, i placed in the vector table. Routine starts in ADL Mode due to MIXED MODE
-  PUSH IX       ; Save IX to SPL
-  PUSH HL       ; Save HL to SPL
-  LD IX,0
-  ADD IX,SP     ; IX now Points to the bottom of SPL Stack
-  LD L, (IX+7)  ; Get the return Address from SPL into HL
-  LD H, (IX+8) 
-  PUSH.S HL     ; Push return Address to SPS (Z80 Mode Stack)
-  POP HL
-  POP IX        ; Restore IX,HL from SPL
+  INC SP        ; SPL++ -> Leave the Memory Mode Bit alone
+  EX (SP),HL    ; Save HL to SPL, Get Return Address from SPL to HL
+  PUSH.S  HL    ; Push ISR Return Address to the Z80 Mode Stack (SPS)
+  EX (SP),HL    ; Restore HL from SPL
   INC SP
-  INC SP
-  INC SP        ; Get rid of the return Address on SPL including the memory mode bit
-  JP.SIS Z80MODE_IRQ_ROUTINE  ; Jump to Z80 Mode service routine using mode switching JP.
+  INC SP        ; Adjust SPL to the position where it was before the INT
+  JP.SIS  Z80MODE_IRQ_ROUTINE ; Mode switching Jump to the ISR in Z80 Mode
+
+  ds 8        ; Stack for ADL Mode, whatever is needed 
+ADLSTACK: db 0 ;  IMPORTANT!! Due to the way we shuffle the return adress around, this byte is needed!
 ```
