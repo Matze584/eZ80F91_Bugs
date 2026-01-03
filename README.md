@@ -138,7 +138,7 @@ Z80MODE_IRQ_ROUTINE:
 
   .ORG xyz
 INTENTRY:       ; This is the address, i placed in the vector table. Routine starts in ADL Mode due to MIXED MODE
-  INC SP        ; SPL++ -> Leave the Memory Mode Bit alone
+  INC SP        ; SPL++ -> Leave the Memory Mode Byte alone
   EX (SP),HL    ; Save HL to SPL, Get Return Address from SPL to HL
   PUSH.S  HL    ; Push ISR Return Address to the Z80 Mode Stack (SPS)
   EX (SP),HL    ; Restore HL from SPL
