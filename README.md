@@ -26,27 +26,26 @@ releasing BUSREQn. It also only starts driving the bus one clock cycle
 after it detects BUSACKn to be Low.
 The bus has pull-up resistors on all signals, to prevent them from floating.
 
-## 1)  BUSREQn confuses the eZ80 while executing prefixed instructions:
-If the BUSREQn signals becomes low at the same time as an instruction
-with a memory mode prefix is fetched from memory, the eZ80 will grant the bus by
-bringing BUSACKn Low but will fetch the next instruction from the wrong address after
-it has bus ownership again. 
-Mainly, it seems like the wrong processor mode is used for the instruction fetch, depending on 
-the prefix used, before. 
+## 1)  BUSREQn confuses the eZ80 while executing suffixed instructions:
+If a BUSREQn is acknowledged by the CPU when an instruction with a memory mode suffix is executed, 
+the eZ80 fetches the next instruction from the wrong address after it has bus ownership again. 
+Mainly, it seems like the wrong processor mode is used for the next instruction fetch, 
+depending on the suffix used before. If the suffix was .S, MBASE is used for PC[23:16].
+If the suffix was .L, PC[23:16] is used. Regardless of the actual processor mode.
 
-Here is a Code snippet with a .SIL prefixed instruction while running in ADL mode:
+Here is a Code snippet with a .SIL suffixed instruction while running in ADL mode:
 ```
 F80F61  B7        OR   A,A
-F80F62  52 ED 42  SBC.SIL HL,BC
-F80F65  EB        EX   DE,HL           <- On this Address, bits[23:16] are 00 after BusRq/Ack Cycle
+F80F62  52 ED 42  SBC.SIL HL,BC        <- Bus is granted on this instruction
+F80F65  EB        EX   DE,HL           <- Then on this Address, bits[23:16] are 00
 F80F66  ED 33 03  LEA  IY,IY+%3
 F80F69  20 DE     JR   NZ,%F49
 ```
-If the BUSREQ signals hits exactly at the instruction with .SIL prefix, the first instruction
-after the eZ80 reclaiming the bus will be read with the upper byte of PC at 00.
-If running in Z80 Mode, then the same happens with .LIS/.LIL prefixes.
-With a Long prefix in Z80 Mode, the CPU will read the next Instrucion with the upper
-Byte of PC set to an arbitrary value, if BUSREQ/ACK happens to hit exactly on the prefixed
+If a BUSREQn is acknowledged by the CPU exactly at the instruction with .SIL suffix, 
+the first instruction after the eZ80 reclaiming the bus will be read with the upper byte of PC at MBASE.
+If running in Z80 Mode, the same happens with .LIS/.LIL suffixes.
+With a Long suffix in Z80 Mode, the CPU will read the next Instrucion with the upper
+Byte of PC set to an arbitrary value, if BUSREQ/ACK happens to hit exactly on the suffixed
 instruction. 
 
 Here is a real world logic-analyzer screenshot of that problem happening with the above code:\
@@ -56,9 +55,8 @@ Sampling rate is four times the bus clock of 33 MHz (132 MHz).
 ## 2) IM Instruction is ignored entirely. Likely not a bug, but on purpose:
 The eZ80F91 has a vectored interrupt controller, that handles a whole lot of interrupt sources and uses
 a pretty large vector table. In my application, i need only one of the timers to produce interrupts, nothing else.\
-Also, the I register is (ab)used for temporary storage of some mode settings in a pretty large existing code base.\
-So vectored mode is no option for me. On the original Z80, this code ran in IM 1 with all interrupts causing a jump
-to 38h.
+I have to work with a pretty large code base, that abuses the I register as temporary storage and relies on a 50 Hz 
+Interrupt to 38h. So that doesn't quite work out. On original Z80, that code ran nicely in IM1.
 
 Of course, yes, the datasheet says:
 ```
@@ -70,17 +68,12 @@ But the IM 0-2 instructions are there, the datasheet mentiones them in the opcod
 Unfortunately, it seems like they are ignored entirely.  It just won't let me have "all" of my interrupts at 38h,
 but continues to use the vector table, even if i have IM 1 in my code.
 
-Furthermore, historically, the IRQ input was used to trigger either of the three possible responses. Why stop doing so?\
-One of them was, indeed, pulling a vector number from the bus, then index into the vector table and pull 
-the handler address from there.  Thats perfectly fine for IM 2 and the internal vector controller could provide that vector number.
-If IM 1 is selected, just jump to 38h and leave the vector controller alone. Easy...? not.  
-
 I then resorted to use NMI instead of normal maskable interrupts and implement that one timer in FPGA logic.
 That lead to issue #3 further down. 
 
-## 3)  NMI confuses the eZ80 while executing prefixed instructions:
+## 3)  NMI confuses the eZ80 while executing suffixed instructions:
 After settling on using NMI instead of normal maskable interrupts due to the eZ80F91 ignoring the IM instruction, 
-i found another case of missbehavior with regard to prefixes in conjuction with NMI handling.
+i found another case of missbehavior with regard to suffixes in conjuction with NMI handling.
 
 Example code in Z80 Mode:
 ```
@@ -97,25 +90,20 @@ After the successful jump to 00:0066h, even the first instruction of the NMI Han
 ADL Mode and my PUSH AF there is executed by pushing three bytes to SPL instead of two bytes to SPS.  
 After that, execution continues  with proper Z80 mode memory accesses. 
 This leads to the fact, that the POP AF and RETN  at the end of my NMI service routine will now pull 
-data from the Z80 Mode stack (SPS), where it was never pushed to, in the first place.
-This will obviously end in a crash, as well.
+data from the Z80 Mode stack (SPS), where it was never pushed to in the first place.
+This will obviously end in a crash as well.
 
 Here is a Logic Analyzer Screenshot of that bug happening: 
 <img width="1364" height="477" alt="NMI_Annotated" src="https://github.com/user-attachments/assets/1de91811-71b8-4ad3-ba1d-024394d21588" />
 Sampling clock is PHI (Clock Out)  from the processor itself.
 
-This _COULD_ be a response to entering the NMI with Mixed Memory Mode Bit enganged. But i do not enable Mixed Mode anywhere. 
-I'd also suspect, that the two byte return address store would then have been a three byte store with the source memory mode
-in the third byte.  But that isn't the case, either.  Also, this happens only, if the NMI hits a prefixed instruction. Any other
-time, it reacts as expected.
-
-## 4)  IRQ confuses the eZ80 while executing prefixed instructions: 
+## 4)  IRQ confuses the eZ80 while executing suffixed instructions: 
 While looking after some other strange effects with NMI, i wanted to have a look at IRQ, too. 
-Turns out: When running in Z80 mode and using prefixed instructions like in example #3, the outcome
-is exactly the same as in #3.  So, no... IRQ doesn't work in Z80 mode while using memory mode prefixes, either.
+Turns out: When running in Z80 mode and using suffixed instructions like in example #3, the outcome
+is exactly the same as in #3.  So, no... IRQ doesn't work in Z80 mode while using memory mode suffixes, either.
 
 ## What _SEEMS_ to work as a workaround is the following: 
-When running in Z80 Mode and you need to use interrupts and prefixed instructions in your application at once (oh, behave!!)
+When running in Z80 Mode and you need to use interrupts and suffixed instructions in your application at once (oh, behave!!)
 then try with mixed memory mode. 
 - Setup the 16 bit I Register to the beginning of the vector table.
 - point SPS to a valid stack location
@@ -126,7 +114,7 @@ then try with mixed memory mode.
 - enable interrupts
 - enjoy
 
-That way, no more strange prefix related issues occured for me.
+That way, no more strange suffix related issues occured for me.
 
 As my application needs Z80 Mode interrupt Handling, i came up with the following Service Routine: 
 ```
@@ -149,3 +137,19 @@ INTENTRY:       ; This is the address, i placed in the vector table. Routine sta
   ds 8        ; Stack for ADL Mode, whatever is needed 
 ADLSTACK: db 0 ;  IMPORTANT!! Due to the way we shuffle the return adress around, this byte is needed!
 ```
+
+For my specific application — which repurposes the I register for status storage — I ended up with the following workaround:
+The application is offset by +64 KB above 00:0000h using MBASE=01h. This frees up the entire lower 64 KB range (00:0000h – 00:FFFFh),
+making room for 128 copies of the Interrupt Vector Table. So whatever is stored in the I register, there will be a valid table at that
+address. Conveniently, ZiLOG left the first few bytes of the interrupt vector table unused, so even with I = 0000h, there is still space
+for the RST vectors. These are also executed in ADL mode starting at 00:0000h upward when Mixed Mode is active. Since only one interrupt
+vector per table is actually used, there was sufficient room to build wrapper routines for all RST vectors and the interrupt handler.
+These wrappers clean up the stacks and then jump to the appropriate vectors in Z80 mode.
+
+## 5) Single Stepping suffixed Block Instructions loose the suffix after the first halt
+While developing my ZDI debugger ([ez80dbg on GitHub](https://github.com/Matze584/ez80dbg)), I noticed that even single-stepping 
+causes the eZ80 to lose its suffix on repeating block instructions such as `LDIR`, `OTIR`, `INIR`, etc.
+The first step executes correctly, honoring the suffix and using the right memory mode. On all subsequent steps,
+however, the instruction is executed without re-reading the suffix, and therefore operates with the wrong memory mode and register width.
+
+The same instruction runs flawlessly when executed without single-stepping.
