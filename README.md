@@ -55,7 +55,7 @@ Sampling rate is four times the bus clock of 33 MHz (132 MHz).
 ## 2) IM Instruction is ignored entirely. Likely not a bug, but on purpose:
 The eZ80F91 has a vectored interrupt controller, that handles a whole lot of interrupt sources and uses
 a pretty large vector table. In my application, i need only one of the timers to produce interrupts, nothing else.\
-I have to work with a pretty large code base, that abuses the I register as temporary storage and relies on a 50 Hz 
+I have to work with a pretty large existing code base, that abuses the I register as temporary storage and relies on a 50 Hz 
 Interrupt to 38h. So that doesn't quite work out. On original Z80, that code ran nicely in IM1.
 
 Of course, yes, the datasheet says:
