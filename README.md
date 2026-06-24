@@ -146,7 +146,7 @@ for the RST vectors. These are also executed in ADL mode starting at 00:0000h up
 vector per table is actually used, there was sufficient room to build wrapper routines for all RST vectors and the interrupt handler.
 These wrappers clean up the stacks and then jump to the appropriate vectors in Z80 mode.
 
-## 5) Single Stepping suffixed Block Instructions loose the suffix after the first halt
+## 5) Single Stepping suffixed Block Instructions lose the suffix after the first halt
 While developing my ZDI debugger ([ez80dbg on GitHub](https://github.com/Matze584/ez80dbg)), I noticed that even single-stepping 
 causes the eZ80 to lose its suffix on repeating block instructions such as `LDIR`, `OTIR`, `INIR`, etc.
 The first step executes correctly, honoring the suffix and using the right memory mode. On all subsequent steps,
